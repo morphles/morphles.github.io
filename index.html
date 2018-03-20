@@ -35,14 +35,13 @@
 		var PRFX = "mbm18xxapp_";
 
 		var curr_transfer = {};
+		var currencies = [];
 		var monies = {};
 		var starting_bank;
 		var log = [];
 
 		function click_handler(e) {
-			var target = e.target.id.indexOf("purse_") !== 0 ? e.target.parentNode : e.target;
-			select_purse(target.id.replace("purse_", ""));
-
+			select_purse((e.target.id.indexOf("purse_") !== 0 ? e.target.parentNode : e.target).id.replace("purse_", ""));
 		}
 		function select_purse(id) {
 			if (id == -1) {
@@ -93,10 +92,10 @@
 		function end_transfer(e) {
 			if (e.target && e.target.parentNode == _s('#previous')[0]) {
 				var parts = e.target.innerHTML.split("x");
-				transfer(curr_transfer.from, curr_transfer.to, parts[0], parts[1]);
+				transfer(curr_transfer.from, curr_transfer.to, parts[0], parts[1], 0);
 			}
 			else {
-				transfer(curr_transfer.from, curr_transfer.to, _s("#tamount")[0].value, _s("#tamount_mul")[0].value);
+				transfer(curr_transfer.from, curr_transfer.to, _s("#tamount")[0].value, _s("#tamount_mul")[0].value, 0);
 			}
 			_s("#transfer")[0].style.display = "none";
 			update_purses([curr_transfer.from, curr_transfer.to]);
@@ -106,7 +105,7 @@
 		var last_mark_time;
 		function mark_log_line(e) {
 			if (Date.now() - last_mark_time < 500) {
-				return;
+				return;//prevent double taps on touch device
 			}
 			var colors = ["", "#880000", "#008800", "#000088"];
 			var cci = typeof e.target.dataset.bgc == "undefined" ? 0 : +e.target.dataset.bgc;
@@ -120,10 +119,10 @@
 			}
 			last_mark_time = Date.now();
 		}
-		function transfer(from, to, amount, mul) {
-			monies[from].amount = (+monies[from].amount) - (+amount)*(+mul);
-			monies[to].amount = (+monies[to].amount) + (+amount)*(+mul);
-			log.push({"from":from, "to":to, "amount":amount, "mul":mul});
+		function transfer(from, to, amount, mul, currency) {
+			monies[from].amounts[0] = (+monies[from].amounts[currency]) - (+amount)*(+mul);
+			monies[to].amounts[0] = (+monies[to].amounts[currency]) + (+amount)*(+mul);
+			log.push({"from":from, "to":to, "amount":amount, "mul":mul, "currency":0});
 			_s('#log_display')[0].appendChild(_ce("div", {"class":"log_line", "id":"log_entry_"+(log.length - 1)}, _s("#purse_"+from+" .name")[0].innerHTML + " ==> " + _s("#purse_"+to+" .name")[0].innerHTML  + " " + amount + "x" + (mul ? mul : 1)));
 			_s('#log_display')[0].scrollTop = _s('#log_display')[0].scrollHeight;
 			_ev(_s('#log_display')[0], "click", mark_log_line);
@@ -138,8 +137,8 @@
 		}
 		function undo_last() {
 			let last = log.splice(log.length - 1, 1)[0];
-			monies[last.from].amount = (+monies[last.from].amount) + (+last.amount)*(+last.mul);
-			monies[last.to].amount = (+monies[last.to].amount) - (+last.amount)*(+last.mul);
+			monies[last.from].amounts[0] = (+monies[last.from].amounts[0]) + (+last.amount)*(+last.mul);
+			monies[last.to].amounts[0] = (+monies[last.to].amounts[0]) - (+last.amount)*(+last.mul);
 			update_purses([last.from, last.to]);
 
 			_s('#log_display')[0].lastChild.remove();
@@ -171,7 +170,7 @@
 		
 		function update_purses(purses) {
 			for (var i = 0; i<purses.length; i++) {
-				_s("#purse_"+purses[i]+" .amount")[0].innerHTML = monies[purses[i]].amount;
+				_s("#purse_"+purses[i]+" .amount")[0].innerHTML = monies[purses[i]].amounts[0];
 			}
 		}
 
@@ -186,15 +185,14 @@
 			}
 			monies = {};
 			log = [];
-			starting_bank = monies[0] = {amount:+_s("#bank_size")[0].value, label:"Bank"};
-			var nodes = _s('#purse_list div');
-			var node;
-			var i = 1;
-			while ((node = nodes.item(i - 1)) && node.children[0].value) {
-				let [name, color] = node.children[0].value.split("=");
-				monies[i] = {amount:0, label:name};
+			starting_bank = monies[0] = {amounts:[+_s("#bank_size")[0].value], label:"Bank"};
+			var lines = _s('#purse_info')[0].value.split("\n").filter(function(e){return e});
+			var i;
+			while (i in lines) {
+				let [name, color] = lines[i].split("=");
+				monies[i+1] = {amounts:[0], label:name};
 				if (color) {
-					monies[i].color = color;
+					monies[i+1].color = color;
 				}
 				i++;
 			}
@@ -209,7 +207,7 @@
 			var i = 1;
 			for (i in monies) {
 				let indicator = monies[i].color ? '<span class="indicator" style="background-color:'+monies[i].color+';"></span>' : "";
-				d.appendChild(_ce("div", {"class":"purse", id:"purse_"+i}, '<span class="name">'+monies[i].label+'</span>  <span class="amount" data-letter="'+purse_letters[i]+'">'+monies[i].amount+'</amount>' + indicator));
+				d.appendChild(_ce("div", {"class":"purse", id:"purse_"+i, "data-letter":purse_letters[i]}, '<span class="name">'+monies[i].label+'</span><br>  '+indicator+' <span class="amount">'+monies[i].amounts[0]+'</span>'));
 			}
 			_ev(_s("#display .purse"), "click", click_handler);
 			var purses = _s("#display .purse");
@@ -218,20 +216,6 @@
 			}
 			_s("#display")[0].style.display = "block";
 			_s("#log_display")[0].style.display = "block";
-		}
-		function del_purse(e) {
-			if (_s('#purse_list div').length > 1) {
-				e.target.parentNode.remove();
-			}
-		}
-		function make_purse() {
-			if (_s('#purse_list div').length && _s('#purse_list div:last-child input[type="text"]')[0].value == "") {
-				return;
-			}
-			var list = _s('#purse_list')[0];
-			list.appendChild(_ce('div', {'class':"purse_row"}, '<input type="text" value="" placeholder="name" class="purse_name"> <span class="remove_purse warning"></span>'));
-			_ev(_s('#purse_list div:last-child input[type="text"]'), 'keyup', make_purse);
-			_ev(_s('#purse_list div:last-child .remove_purse'), 'click', del_purse);
 		}
 		function setup_cancel() {
 			_s("#setup")[0].style.display = "none";
@@ -300,7 +284,6 @@
 			return true;
 		}
 		document.addEventListener('DOMContentLoaded', function () {
-			make_purse();
 			_ev(_s('#save'), 'click', save);
 			_ev(_s('#send'), 'click', end_transfer);
 			_ev(_s('#transfer_cancel'), 'click', transfer_cancel);
@@ -333,7 +316,7 @@
 		#setup_icon {width:32px;height:32px;position:absolute;top:5px;left:5px;border-radius:16px;border:3px green dashed;background-color:black;}
 		#setup_icon:before {width:22px;height:22px;position:absolute;top:-1px;left:-1px;border-radius:16px;background-color:black;border:3px green dashed;content:"";display:inline-block;}
 		* {box-sizing:border-box;}
-		html {width:100%;}
+		html {width:100%;font-family:sans-serif;}
 		body {color:lightgray;background-color:black;width:100%;margin:0;}
 		/*#setup {display:none;}*/
 		#display, #setup {width:100%;}
@@ -342,13 +325,8 @@
 		label {display:inline-block;}
 		.breaker {display:inline-block;height:1px;width:50%;}
 		#bank_size {display:inline-block;margin-right:20px;}
-		#purse_list {margin-top:15px; width:100%;}
-		.purse_row {width:100%;padding:7px 3px;border-radius:5px;margin:2px 0;}
-		.purse_row:nth-child(2n) {background-color:#333;}
-		.purse_row:nth-child(2n+1) {background-color:darkslategray;}
-		.purse_row input {margin-left:5px;}
-		.purse_name {width:20em;}
-		.remove_purse, #transfer_cancel, #setup_cancel {
+		#purse_info {width:100%;height:10em;}
+		#transfer_cancel, #setup_cancel {
 			margin-top:1px;
 			margin-right:4px;
 			display:inline-block;
@@ -359,14 +337,14 @@
 			padding:4px;
 		}
 		#transfer_cancel {position:absolute;right:10px;top:10px;}
-		#display {text-align:center;}
-		.purse {text-align:center;border-radius:5px;background:#333;padding:5px;margin:10px;display:inline-block;width:30%; max-width:15em;;font-weight:bold; font-size:larger;border:5px solid transparent;}
+		#display {text-align:center;padding-top:15px;}
+		.purse {text-align:center;border-radius:5px;background:#333;padding:5px;margin:10px;display:inline-block;width:30%;vertical-align:middle;font-weight:bold; font-size:larger;border:5px solid transparent;position:relative;}
 		.purse.selected {border:5px green solid;box-shadow:0 0 5px 3px green, 0 0 5px 3px green inset;}
-		.purse .name {color:white;display:inline-block;}
-		.purse .amount {color:green;display:block;font-size:24px;}
-		.purse .amount:after, #previous span:before {display:block;float:right;padding:0 4px 4px 4px;color:black;background:gainsboro;border:3px outset gainsboro;content:attr(data-letter);font:fixed;margin:0;margin-top:-3px;border-radius:5px;text-align:middle;}
+		.purse .name {color:white;display:inline-block;font-size:32px;}
+		.purse .amount {color:lime;display:block;font-size:32px;}
+		.purse:before, #previous span:before {display:block;position:absolute;right:-0.7em;top:-0.7em;padding:0 4px 4px 4px;color:black;background:gainsboro;border:3px outset gainsboro;content:attr(data-letter);font:fixed;margin:0;margin-top:-3px;border-radius:5px;text-align:middle;}
 		#purse_0 {width:90%;margin:10px auto;max-width:90%;}
-		#purse_0 .amount:after {content:"         ";height:15px;}
+		#purse_0:before {content:"         ";height:15px;}
 		.remove_purse:before, #transfer_cancel:before, #setup_cancel:before {content:"X";display:inline-block;}
 		.indicator {display:block;width:32px;height:32px;border-radius:16px;float:left;}
 		#save_container {text-align:center;margin-top:10px;}
@@ -379,7 +357,6 @@
 			border-bottom:3px solid darkred;
 			border-right:3px solid darkred;
 			font-weight:bold;
-			font-family:sans-serif;
 			border-radius:3px;
 		}
 		#transfer {display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#000;font-size:larger;font-weight:bold;}
@@ -390,8 +367,8 @@
 		#topt input[type="number"] {height:1em;width:6em;}
 		#tamount_container {margin:10px auto;}
 		#previous {margin:10px auto;max-width:24em;text-align:justify;}
-		#previous span {width:7em; display:inline-block;margin:10px 0px;text-align:center;overflow:hidden;;}
-		#previous span:before {float:left;padding:0 2px 2px 2px;margin-top:0;font-size:small;border-width:2px}
+		#previous span {width:7em; display:inline-block;margin:10px 0px;text-align:center;position:relative;}
+		#previous span:before {padding:0 2px 2px 2px;margin-top:0;font-size:small;border-width:2px}
 		.spacer {display:inline-block;height:1px;width:99%;}
 		#log_display {width:100%;max-height:10em;overflow-y:scroll;margin:auto;color:white;font-weight:bold;border:3px solid #333;margin-top:20px;}
 		#log_display .log_line {padding:3px;margin:2px;}
@@ -407,8 +384,7 @@
 	<div id="setup">
 		<div id="setup_cancel" class="warning"></div>
 		<div id="bank_row"><label for="bank_size">Bank size:</label> <input type="text" id="bank_size" value="999999"> <span class="breaker"></span></div>
-		<div id="purse_list">
-		</div>
+		<textarea id="purse_info"></textarea>
 		<div id="save_container">
 			<input type="button" id="save" value="Save &amp; Use" class="warning">
 		</div>
