@@ -35,14 +35,29 @@
 		var PRFX = "mbm18xxapp_";
 
 		var curr_transfer = {};
+		/**
+		 * Currencies can be of one of these types:
+		 * normal - displays as number (if non 0; if 0, skipped from currencies displayed in purse), can add/subtrackt as expected
+		 * infinite - (applies to bank only) displays infinity adding/subtracking changes nothing
+		 * always shown - always displayed, even if 0
+		 */
 		var currencies = [];
-		var monies = {};
+		var monies = [];
 		var starting_bank;
 		var log = [];
 
 		function click_handler(e) {
 			select_purse((e.target.id.indexOf("purse_") !== 0 ? e.target.parentNode : e.target).id.replace("purse_", ""));
 		}
+
+		/**
+		 * If id is -1, all selections are cleared.
+		 * If no purse with given id is found, nothing happens.
+		 * If no previously is present, given purse is simply selected.
+		 * If there is previously selected purse, transfer is initiated, from that purse to a given purse.
+		 *    unless given purse matches matches previously selected, in that case it is simply deselected.
+		 * @param id 
+		 */
 		function select_purse(id) {
 			if (id == -1) {
 				if (_s(".purse.selected").length > 0) {
@@ -51,95 +66,153 @@
 				curr_transfer = {};
 				return;
 			}
-			if (_s("#purse_"+id).length == 0) {
+			if (!_id("purse_"+id)) {
 				return;
 			}
 			if (typeof curr_transfer.from == "undefined") {
 				curr_transfer.from = id;
-				_s("#purse_"+id)[0].classList.toggle("selected");
+				_id("purse_"+id).classList.toggle("selected");
 			}
 			else if (curr_transfer.from != id) {
 				mid_transfer(id);
 			}
 			else {
-				_s("#purse_"+id)[0].classList.toggle("selected");
+				_id("purse_"+id).classList.toggle("selected");
 				curr_transfer = {};
 			}
 		}
+
 		function mid_transfer(to_id) {
 			curr_transfer.to = +to_id;
 
-			_s("#from")[0].innerHTML = monies[curr_transfer.from].label;
-			_s("#to")[0].innerHTML = monies[curr_transfer.to].label;
+			_id("from").innerHTML = monies[curr_transfer.from].label;
+			_id("to").innerHTML = monies[curr_transfer.to].label;
+			/*
 			var prev_inputs = _s("#previous span");
 			var i;
 			for (i = 0; i < prev_inputs.length; i++) {
 				prev_inputs[i].remove();
 			}
 
-			var prev_container = _s("#previous")[0];
+			var prev_container = _id("previous");
 			var spacer = _s("previous .spacer")[0];
 			var prevs = get_prevs();
-			console.log(prevs);
 			for (i in prevs) {
 				prev_container.insertBefore(_ce("span", {"class":"warning","data-letter":purse_letters[prevs.length - i]}, prevs[i],), prev_container.firstChild);
 			}
 			_ev(_s("#previous span"), "click", end_transfer);
-			_s("#transfer")[0].style.display = "block";
-			_s("#tamount")[0].focus();
-			_s("#tamount")[0].select();
+			*/
+
+			_id("transfer").style.display = "block";
+			_id("tamount").focus();
+			_id("tamount").select();
 		}
+
 		function end_transfer(e) {
 			if (e.target && e.target.parentNode == _s('#previous')[0]) {
 				var parts = e.target.innerHTML.split("x");
 				transfer(curr_transfer.from, curr_transfer.to, parts[0], parts[1], 0);
 			}
 			else {
-				transfer(curr_transfer.from, curr_transfer.to, _s("#tamount")[0].value, _s("#tamount_mul")[0].value, 0);
+				let currency_id = e.target && e.target.dataset.currency_id ? e.target.dataset.currency_id : 0;
+				transfer(curr_transfer.from, curr_transfer.to, _id("tamount").value, _id("tamount_mul").value, currency_id);
+				//XXX to plugin in future XXX
+				if (!e.shiftKey && currency_id) {//if shift overide auto pay (say buying from IPO when market price differs, needs manual payment then
+					let i, issuer, price_id;
+					for (i in monies) {
+						if (monies[i].share_id == currency_id) {
+							issuer = i;
+							break;
+						}
+					}
+					for (i in currencies) {
+						if (currencies[i].abbr == "^") {
+							price_id = i;
+							break;
+						}
+					}
+					if (price_id && issuer && monies[issuer].amounts[price_id]) {
+						if (curr_transfer.to != monies.length - 1) {//currently we just asume last purse to be MARKET
+							//pay for shares; From receiver to bank, share price times share amoun, in base currency/cash
+							transfer(curr_transfer.to, 0, monies[issuer].amounts[price_id], (+_id("tamount").value)*(+_id("tamount_mul").value), 0);
+						}
+						else {
+							//sell and gain money for shares; From bank to seller, share price times share amoun, in base currency/cash
+							transfer(0, curr_transfer.from, monies[issuer].amounts[price_id], (+_id("tamount").value)*(+_id("tamount_mul").value), 0);
+						}
+					}
+				}
 			}
-			_s("#transfer")[0].style.display = "none";
-			update_purses([curr_transfer.from, curr_transfer.to]);
-			_s("#purse_"+curr_transfer.from)[0].classList.toggle("selected");
+			_id("transfer").style.display = "none";
+			redraw_purse_amounts(curr_transfer.from);
+			redraw_purse_amounts(curr_transfer.to);
+			_id("purse_"+curr_transfer.from).classList.toggle("selected");
 			curr_transfer = {};
 		}
+
 		var last_mark_time;
 		function mark_log_line(e) {
 			if (Date.now() - last_mark_time < 500) {
 				return;//prevent double taps on touch device
 			}
-			var colors = ["", "#880000", "#008800", "#000088"];
-			var cci = typeof e.target.dataset.bgc == "undefined" ? 0 : +e.target.dataset.bgc;
-			if (cci == colors.length - 1) {
-				e.target.style.backgroundColor = colors[0]
-				e.target.dataset.bgc = 0;
-			}
-			else {
-				e.target.style.backgroundColor = colors[cci + 1];
-				e.target.dataset.bgc = cci + 1;
-			}
+
+			let line_id = [...e.target.parentNode.children].indexOf(e.target);
+			log[line_id].mark = log[line_id].mark > 2 ? 0 : log[line_id].mark+1;
+			redraw_log_line(line_id);
+
 			last_mark_time = Date.now();
+			ST.setItem(PRFX + "log", JSON.stringify(log));
 		}
-		function transfer(from, to, amount, mul, currency) {
-			monies[from].amounts[0] = (+monies[from].amounts[currency]) - (+amount)*(+mul);
-			monies[to].amounts[0] = (+monies[to].amounts[currency]) + (+amount)*(+mul);
-			log.push({"from":from, "to":to, "amount":amount, "mul":mul, "currency":0});
-			_s('#log_display')[0].appendChild(_ce("div", {"class":"log_line", "id":"log_entry_"+(log.length - 1)}, _s("#purse_"+from+" .name")[0].innerHTML + " ==> " + _s("#purse_"+to+" .name")[0].innerHTML  + " " + amount + "x" + (mul ? mul : 1)));
+
+		function redraw_log_line(id) {
+			let colors = ["", "#880000", "#008800", "#000088"];
+			let ll = log[id];
+			_id('log_display').children[id].innerHTML = `${monies[ll.from].label} ==> ${monies[ll.to].label} <span style="color:${currencies[ll.currency_id].color};">${currencies[ll.currency_id].abbr}${ll.amount}x${(ll.mul ? ll.mul : 1)}</span>`;
+			_id('log_display').children[id].style.background = colors[ll.mark];
+		}
+
+		function display_log_line(ll) {
+			return _ce("div", {"class":"log_line"});
+		}
+
+		function transfer(from, to, amount, mul, currency_id) {
+			monies[from].amounts[currency_id] = (+monies[from].amounts[currency_id]) - (+amount)*(+mul);
+			monies[to].amounts[currency_id] = (+monies[to].amounts[currency_id]) + (+amount)*(+mul);
+			if (Number.isNaN(monies[from].amounts[currency_id])) {
+				monies[from].amounts[currency_id] = "*";
+			}
+			if (Number.isNaN(monies[to].amounts[currency_id])) {
+				monies[to].amounts[currency_id] = "*";
+			}
+			log.push({"from":from, "to":to, "amount":amount, "mul":mul, "currency_id":currency_id, mark:0});
+			_id('log_display').appendChild(display_log_line(log[log.length - 1]));
+			redraw_log_line(log.length - 1);
 			_s('#log_display')[0].scrollTop = _s('#log_display')[0].scrollHeight;
 			_ev(_s('#log_display')[0], "click", mark_log_line);
 
 			ST.setItem(PRFX + "log", JSON.stringify(log));
 			ST.setItem(PRFX + "monies", JSON.stringify(monies));
 		}
+
 		function transfer_cancel() {
-			_s("#transfer")[0].style.display = "none";
+			_id("transfer").style.display = "none";
 			curr_transfer = {};
 			select_purse(-1);
 		}
+
 		function undo_last() {
 			let last = log.splice(log.length - 1, 1)[0];
-			monies[last.from].amounts[0] = (+monies[last.from].amounts[0]) + (+last.amount)*(+last.mul);
-			monies[last.to].amounts[0] = (+monies[last.to].amounts[0]) - (+last.amount)*(+last.mul);
-			update_purses([last.from, last.to]);
+			monies[last.from].amounts[last.currency_id] = (+monies[last.from].amounts[last.currency_id]) + (+last.amount)*(+last.mul);
+			monies[last.to].amounts[last.currency_id] = (+monies[last.to].amounts[last.currency_id]) - (+last.amount)*(+last.mul);
+			if (Number.isNaN(monies[last.from].amounts[last.currency_id])) {
+				monies[last.from].amounts[last.currency_id] = "*";
+			}
+			if (Number.isNaN(monies[last.to].amounts[last.currency_id])) {
+				monies[last.to].amounts[last.currency_id] = "*";
+			}
+
+			redraw_purse_amounts(last.from);
+			redraw_purse_amounts(last.to);
 
 			_s('#log_display')[0].lastChild.remove();
 			_s('#log_display')[0].scrollTop = _s('#log_display')[0].scrollHeight;
@@ -167,100 +240,191 @@
 			}
 			return prevs;
 		}
-		
-		function update_purses(purses) {
-			for (var i = 0; i<purses.length; i++) {
-				_s("#purse_"+purses[i]+" .amount")[0].innerHTML = monies[purses[i]].amounts[0];
-			}
-		}
 
 		function save() {
 			var existing_purses = _s("#display .purse");
-			for (var i = 0; i<existing_purses.length; i++) {
+			let i, j;
+			for (i = 0; i<existing_purses.length; i++) {
 				existing_purses[i].remove();
 			}
 			var existing_log_lines = _s("#log_display .log_line");
-			for (var i = 0; i<existing_log_lines.length; i++) {
+			for (i = 0; i<existing_log_lines.length; i++) {
 				existing_log_lines[i].remove();
 			}
-			monies = {};
+			currencies = [];
+			monies = [];//setup using currencies as apropriate! XXX
 			log = [];
-			starting_bank = monies[0] = {amounts:[+_s("#bank_size")[0].value], label:"Bank"};
-			var lines = _s('#purse_info')[0].value.split("\n").filter(function(e){return e});
-			var i;
+			parse_currencies();
+			starting_bank = monies[0] = {amounts:Array(currencies.length).fill(0), label:"Bank"};
+			for (i in currencies) {
+				monies[0].amounts[i] = currencies[i].amount;
+			}
+			var lines = _id('purse_info').value.split("\n").filter(function(e){return e});
+			i = 0;
 			while (i in lines) {
-				let [name, color] = lines[i].split("=");
-				monies[i+1] = {amounts:[0], label:name};
-				if (color) {
-					monies[i+1].color = color;
+				let [name, color, share_abbr] = lines[i].split("=");
+				share_id = -1;
+				if (share_abbr) {
+					for (j in currencies) {
+						if (currencies[j].abbr == share_abbr) {
+							share_id = j;
+							break;
+						}
+					}
 				}
+
+				let monie = {amounts:Array(currencies.length).fill(0), label:name, "share_id":share_id};
+				if (color) {
+					monie.color = color;
+				}
+				monies.push(monie);
 				i++;
 			}
-			setup_display();
+			prepare_display();
 			ST.setItem(PRFX + "starting_bank", JSON.stringify(starting_bank));
 			ST.setItem(PRFX + "log", JSON.stringify(log));
 			ST.setItem(PRFX + "monies", JSON.stringify(monies));
+			ST.setItem(PRFX + "currencies", JSON.stringify(currencies));
 		}
-		function setup_display() {
-			_s("#setup")[0].style.display = "none";
-			var d = _s("#display")[0];
-			var i = 1;
+
+		function parse_currencies() {
+			let lines = _id('currency_info').value.split("\n").filter(function(e){return e});
+			let i=0;
+			while (i in lines) {
+				[amount, abbr, name, color] = lines[i].split(",");
+				//mama probably never told you, but JSON is so very != JS, and NaN does not exist in JSON land
+				currencies[i] = {"amount":Number.isInteger(+amount) ? +amount : "*", "abbr":abbr, "name":name, "color":color, "always":amount[0] != "+"};
+				i++;
+			}
+		}
+
+		/**
+		 * Redraws purse money amounts, with currencies displayed as they should be per currency definition.
+		 */
+		function redraw_purse_amounts(id) {
+			let i;
+			let amounts = _s("#purse_"+id+" .amount");
+			for (i in monies[id].amounts) {
+				if ((monies[id].amounts[i] !== 0 && monies[id].amounts[i] != "*") || currencies[i].always) {
+					amounts[i].innerHTML = currencies[i].abbr + ((monies[id].amounts[i] == "*") ? '<span class="infin">&infin;</span>' : monies[id].amounts[i]);
+				}
+				else {
+					amounts[i].innerHTML = "";
+				}
+			}
+		}
+
+		function payout_show(e) {
+			if (e.shiftKey) {
+				_id("_18xx_payout_by").value = e.target.parentNode.id.replace("purse_", "");
+				_id("_18xx_specials").style.display = "block";
+			}
+		}
+		function payout_confirm() {
+			let issuer = _id("_18xx_payout_by").value;
+			let i, num_shares, price_id, share_id = monies[issuer].share_id;
+			for (i in currencies) {
+				if (currencies[i].abbr == "^") {
+					price_id = i;
+				}
+			}
+			for (i=1;i<monies.length - 1;i++) {
+				num_shares = monies[i].amounts[share_id];
+				if (num_shares > 0) {
+					transfer(0, i, monies[issuer].amounts[price_id], num_shares, 0);
+					redraw_purse_amounts(i);
+					redraw_purse_amounts(0);
+				}
+			}
+			num_shares = monies[monies.length - 1].amounts[share_id];
+			if (num_shares > 0) {
+				transfer(0, issuer, monies[issuer].amounts[price_id], num_shares, 0);
+				redraw_purse_amounts(issuer);
+				redraw_purse_amounts(0);
+			}
+
+			_id("_18xx_specials").style.display = "none";
+		}
+
+		function prepare_display() {
+			let d = _id("display");
+			let i, j;
 			for (i in monies) {
 				let indicator = monies[i].color ? '<span class="indicator" style="background-color:'+monies[i].color+';"></span>' : "";
-				d.appendChild(_ce("div", {"class":"purse", id:"purse_"+i, "data-letter":purse_letters[i]}, '<span class="name">'+monies[i].label+'</span><br>  '+indicator+' <span class="amount">'+monies[i].amounts[0]+'</span>'));
+				let purse = _ce("div", {"class":"purse", id:"purse_"+i, "data-letter":purse_letters[i]}, '<span class="name">'+monies[i].label+'</span><br>  '+indicator);
+				for (j in currencies) {
+					purse.appendChild(_ce("span", {"class":"amount", "style":"color:"+currencies[j].color}));
+				}
+				d.appendChild(purse);
+				redraw_purse_amounts(i);
+				if (monies[i].share_id != -1) {
+					_id("_18xx_payout_by").appendChild(_ce("option", {value:i}, monies[i].label));
+				}
 			}
+			_ev(_s(".purse .indicator"), "click", payout_show);
 			_ev(_s("#display .purse"), "click", click_handler);
 			var purses = _s("#display .purse");
 			for (i = 0; i < purses.length; i++) {
 				_ev(purses[i], "drop", (function (el) { return function (e) { mid_transfer(e, el); }; })(purses[i]))
 			}
-			_s("#display")[0].style.display = "block";
-			_s("#log_display")[0].style.display = "block";
+			_id("display").style.display = "block";
+			_id("log_display").style.display = "block";
+
+			let opts = _id("send_opts");
+			for (i=1; i<opts.children.length; i++) {
+				opts.children[i].remove();
+			}
+			for (i=1; i<currencies.length; i++) {
+				opts.appendChild(_ce("input", {"class":"warning", "type":"button", "value":currencies[i].abbr, "data-currency_id":i, style:`color:${currencies[i].color};`}));
+			}
+			_ev(_s("#send_opts input:not(#send)"), "click", end_transfer);
+
+			setup_toggle();
 		}
-		function setup_cancel() {
-			_s("#setup")[0].style.display = "none";
-			_s("#display")[0].style.display = "block";
-			_s("#log_display")[0].style.display = "block";
-		}
-		function setup_show() {
-			_s("#setup")[0].style.display = "block";
-			_s("#display")[0].style.display = "none";
-			_s("#log_display")[0].style.display = "none";
+
+		function setup_toggle() {
+			let hide_setup = _id("setup").style.display != "none";
+			_id("setup").style.display = hide_setup ? "none" : "block";
+			_id("display").style.display = hide_setup ? "block" : "none";
+			_id("log_display").style.display = hide_setup ? "block" : "none";
 		}
 		
 		function keyboard_handler(e) {
-			console.log(e);
 			let purse_id = purse_letters.indexOf(e.key.toLowerCase());
 			let handled = false;
 
-			if (e.ctrlKey) {//avoid overiding browser binds
-			}
-			else if (_s('#setup')[0].style.display != "none") {
-			}
-			else if (typeof curr_transfer.to != "undefined") {
-				let f_id = fx_reverse_map.indexOf(e.key);
-				if (e.key == "Escape") {
+			if (e.key == "Escape") {
+				if (typeof curr_transfer.to != "undefined") {
 					transfer_cancel();
 					handled = true;
 				}
-				else if (purse_id > 0) {
+				else if (window.getComputedStyle(_id("_18xx_specials")).display !== "none") {
+					_id("_18xx_specials").style.display = "none";
+					handled = true;
+				}
+			}
+			else if (e.ctrlKey || _s('#setup')[0].style.display != "none") {
+			} //avoid overiding browser binds, and no binds for setup section
+			else if (typeof curr_transfer.to != "undefined") { //binds inside transfer dialog
+				let f_id = fx_reverse_map.indexOf(e.key);
+				if (purse_id > 0) {
 					let selected = _s("#previous span")[purse_id - 1];
 					if (selected) {
 						end_transfer({target:selected});
 					}
 					handled = true;
 				}
-				else if (e.key == "Enter" && _s("#tamount")[0].value && _s("#tamount_mul")[0].value) {
+				else if (e.key == "Enter" && _id("tamount").value && _id("tamount_mul").value) {
 					end_transfer({});
 					handled = true;
 				}
-				else if (f_id > 0 && _s("#tamount")[0].value) {
-					_s("#tamount_mul")[0].value = f_id;
+				else if (f_id > 0 && _id("tamount").value) {
+					_id("tamount_mul").value = f_id;
 					end_transfer({});
 					handled = true;
 				}
 			}
-			else if (purse_id != -1 && typeof curr_transfer.to == "undefined") {
+			else if (purse_id != -1 && typeof curr_transfer.to == "undefined") {//binds for usual display
 				if (e.key.toLowerCase() != e.key) {
 					select_purse(-1);
 					select_purse(purse_id);
@@ -283,26 +447,42 @@
 			}
 			return true;
 		}
+
+		var textFile = null;
+		function makeTextFile () {
+			var data = new Blob([ST.getItem(PRFX + "log")+"\n"+ST.getItem(PRFX + "monies")+"\n"+ST.getItem(PRFX + "starting_bank")+"\n"+ST.getItem(PRFX + "currencies")], {type: 'text/plain'});
+			// If we are replacing a previously generated file we need to
+			// manually revoke the object URL to avoid memory leaks.
+			if (textFile !== null) {
+			  window.URL.revokeObjectURL(textFile);
+			}
+			textFile = window.URL.createObjectURL(data);
+			return textFile;
+		};
+
 		document.addEventListener('DOMContentLoaded', function () {
 			_ev(_s('#save'), 'click', save);
 			_ev(_s('#send'), 'click', end_transfer);
 			_ev(_s('#transfer_cancel'), 'click', transfer_cancel);
-			_ev(_s('#setup_cancel'), 'click', setup_cancel);
-			_ev(_s('#setup_icon'), 'click', setup_show);
+			_ev(_s('#setup_icon'), 'click', setup_toggle);
+
+
+			_ev(_s('#_18xx_payout_do'), 'click', payout_confirm);
 
 			var existing_log = ST.getItem(PRFX + "log");
 			if (existing_log != null) {
 				log = JSON.parse(existing_log);
 				monies = JSON.parse(ST.getItem(PRFX + "monies"));
 				starting_bank = JSON.parse(ST.getItem(PRFX + "starting_bank"));
-				setup_display();
+				currencies = JSON.parse(ST.getItem(PRFX + "currencies"));
+				prepare_display();
+				setup_toggle();
 
-				//XXX much reapeat with top, possibly fix that
-				var logdiv = _s('#log_display')[0];
-				var i, ll;
+				let logdiv = _id('log_display');
+				log.map(display_log_line).map(logdiv.appendChild, logdiv);
+				let i;
 				for (i in log) {
-					ll = log[i];
-					logdiv.appendChild(_ce("div", {"class":"log_line", "id":"log_entry_"+i}, _s("#purse_"+ll.from+" .name")[0].innerHTML + " ==> " + _s("#purse_"+ll.to+" .name")[0].innerHTML  + " " + ll.amount + "x" + (ll.mul ? ll.mul : 1)));
+					redraw_log_line(i);
 				}
 
 				logdiv.scrollTop = _s('#log_display')[0].scrollHeight;
@@ -310,23 +490,25 @@
 				_ev(document, 'keydown', keyboard_handler);
 				_ev(_s('#undo')[0], "click", undo_click);
 			}
+			_ev(_id("download"), "click", function () {
+				let file = makeTextFile();
+				_id("global_buttons").appendChild(_ce("a", {href:file}, "download"));
+			});
 		});
 	</script>
 	<style type="text/css">
-		#setup_icon {width:32px;height:32px;position:absolute;top:5px;left:5px;border-radius:16px;border:3px green dashed;background-color:black;}
+		#setup_icon {width:32px;height:32px;position:absolute;top:5px;right:5px;border-radius:16px;border:3px green dashed;background-color:black;}
 		#setup_icon:before {width:22px;height:22px;position:absolute;top:-1px;left:-1px;border-radius:16px;background-color:black;border:3px green dashed;content:"";display:inline-block;}
 		* {box-sizing:border-box;}
 		html {width:100%;font-family:sans-serif;}
 		body {color:lightgray;background-color:black;width:100%;margin:0;}
-		/*#setup {display:none;}*/
 		#display, #setup {width:100%;}
 
 		#bank_row {margin:10px 3px;text-align:justify;}
 		label {display:inline-block;}
 		.breaker {display:inline-block;height:1px;width:50%;}
-		#bank_size {display:inline-block;margin-right:20px;}
-		#purse_info {width:100%;height:10em;}
-		#transfer_cancel, #setup_cancel {
+		#purse_info, #currency_info {width:100%;height:10em;}
+		#transfer_cancel {
 			margin-top:1px;
 			margin-right:4px;
 			display:inline-block;
@@ -341,11 +523,12 @@
 		.purse {text-align:center;border-radius:5px;background:#333;padding:5px;margin:10px;display:inline-block;width:30%;vertical-align:middle;font-weight:bold; font-size:larger;border:5px solid transparent;position:relative;}
 		.purse.selected {border:5px green solid;box-shadow:0 0 5px 3px green, 0 0 5px 3px green inset;}
 		.purse .name {color:white;display:inline-block;font-size:32px;}
-		.purse .amount {color:lime;display:block;font-size:32px;}
+		.purse .amount {color:lime;display:inline-block;margin:0 7px;margin-top:5px;font-size:32px;line-height:1em;border-radius:5px;box-shadow:2px 2px 3px 1px gray;padding:0 5px;}
+		.purse .amount:empty {display:none;}
 		.purse:before, #previous span:before {display:block;position:absolute;right:-0.7em;top:-0.7em;padding:0 4px 4px 4px;color:black;background:gainsboro;border:3px outset gainsboro;content:attr(data-letter);font:fixed;margin:0;margin-top:-3px;border-radius:5px;text-align:middle;}
 		#purse_0 {width:90%;margin:10px auto;max-width:90%;}
 		#purse_0:before {content:"         ";height:15px;}
-		.remove_purse:before, #transfer_cancel:before, #setup_cancel:before {content:"X";display:inline-block;}
+		.remove_purse:before, #transfer_cancel:before {content:"X";display:inline-block;}
 		.indicator {display:block;width:32px;height:32px;border-radius:16px;float:left;}
 		#save_container {text-align:center;margin-top:10px;}
 		#save {font-size:large;padding:3px 10px;}
@@ -362,7 +545,9 @@
 		#transfer {display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#000;font-size:larger;font-weight:bold;}
 		#topt {margin:20px auto;width:50%;background:#333;border-radius:5px;text-align:center;padding:10px;position:relative;}
 		#dir {margin:5px;display:inline-block;font-size:larger;}
-		#dir #send {font-size:smaller;margin:0px 10px;}
+		#dir #send {font-size:smaller;margin:0px 10px;margin-bottom:15px;}
+		#send_opts {display:inline-block;vertical-align:top;}
+		#send_opts input {display:block; text-shadow:0 0 1px black,0 0 1px black,0 0 1px black,0 0 1px black;}
 		#topt input {font-size:larger;font-weight:bold;}
 		#topt input[type="number"] {height:1em;width:6em;}
 		#tamount_container {margin:10px auto;}
@@ -370,20 +555,29 @@
 		#previous span {width:7em; display:inline-block;margin:10px 0px;text-align:center;position:relative;}
 		#previous span:before {padding:0 2px 2px 2px;margin-top:0;font-size:small;border-width:2px}
 		.spacer {display:inline-block;height:1px;width:99%;}
+		#previous .spacer:before {display:none;}
 		#log_display {width:100%;max-height:10em;overflow-y:scroll;margin:auto;color:white;font-weight:bold;border:3px solid #333;margin-top:20px;}
 		#log_display .log_line {padding:3px;margin:2px;}
 		#log_display .log_line:nth-child(6n), #log_display .log_line:nth-child(6n+1), #log_display .log_line:nth-child(6n+2) {background:#333;}
-		#log_display .log_line:last-child {font-size:larger;color:yellow;}
+		#log_display .log_line:last-child {font-size:larger;box-shadow:0 0 3px 1px yellow inset;}
 		#global_buttons {padding:0 10px;}
 		#undo {background-color:gainsboro;width:48px;height:48px;border-radius:5px;padding:2px;border:3px outset gainsboro;}
+		.infin {font-size:46px;font-weight:bold;vertical-align:-3px;}
+
+
+		#_18xx_specials {display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#000;font-size:larger;font-weight:bold;}
+		#_18xx_payout {margin:30px auto;width:360px;}
+		#_18xx_payout input, #_18xx_payout select {width:100%;margin-bottom:15px;}
+		#_18xx_payout select {background:black;color:white;border:none;font-size:30px;font-weight:bold;-moz-appearance:none;-webkit-appearance:none;}
 	</style>
 </head>
 
 <body>
 	<div id="setup_icon"></div>
-	<div id="setup">
-		<div id="setup_cancel" class="warning"></div>
-		<div id="bank_row"><label for="bank_size">Bank size:</label> <input type="text" id="bank_size" value="999999"> <span class="breaker"></span></div>
+	<div id="setup" style="display:none;">
+		<b>Currencies</b>, one per line. &lt;amount in bank&gt;,&lt;abbreviation&gt;,&lt;name&gt;,&lt;html color&gt;<br>
+		<textarea id="currency_info"></textarea>
+		<b>Purses</b>, one per line. &lt;name&gt;=&lt;color&gt;=&lt;share abbr (for companies)&gt;<br>
 		<textarea id="purse_info"></textarea>
 		<div id="save_container">
 			<input type="button" id="save" value="Save &amp; Use" class="warning">
@@ -404,17 +598,31 @@
 				</g>
 			</g>
 		</svg>
+		<input type="button" id="download" value="Download">
 	</div>
 	<div id="log_display">
 	</div>
+
+	<div id="_18xx_specials">
+		<div id="_18xx_payout">
+			Payout by:<br>
+			<select id="_18xx_payout_by" readonly="readonly"></select><br>
+			Sum per share:<br>
+			<input id="_18xx_payout_sum" /><br>
+			<input type="button" id="_18xx_payout_do" value="Payout per share" />
+		</div>
+	</div>
+
 	<div id="transfer">
 		<div id="topt">
 			<div id="transfer_cancel" class="warning"></div>
-			<div id="dir">
-				<span id="from">Linda</span> <input id="send" class="warning" type="button" value="=&gt;"> <span id="to">Bank</span>
-			</div>
 			<div id="tamount_container">
 				<input id="tamount" type="number" min="1"> x <input id="tamount_mul" type="number" min="1" value="1">
+			</div>
+			<div id="dir">
+				<span id="from"></span>
+				<div id="send_opts"><input id="send" class="warning" type="button" value="=&gt;"></div>
+				<span id="to"></span>
 			</div>
 			<div id="previous">
 				<span class="spacer"></span>
