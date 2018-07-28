@@ -167,7 +167,7 @@
 		function redraw_log_line(id) {
 			let colors = ["", "#880000", "#008800", "#000088"];
 			let ll = log[id];
-			_id('log_display').children[id].innerHTML = `${monies[ll.from].label} ==> ${monies[ll.to].label} <span style="color:${currencies[ll.currency_id].color};">${currencies[ll.currency_id].abbr}${ll.amount}x${(ll.mul ? ll.mul : 1)}</span>`;
+			_id('log_display').children[id].innerHTML = `<span class="${ll.from == 0 ? 'bank' : ''}">${monies[ll.from].label}</span> ==> <span class="${ll.to == 0 ? 'bank' : ''}">${monies[ll.to].label}</span> <span style="color:${currencies[ll.currency_id].color};">${currencies[ll.currency_id].abbr}${ll.amount}x${(ll.mul ? ll.mul : 1)}</span>`;
 			_id('log_display').children[id].style.background = colors[ll.mark];
 		}
 
@@ -331,7 +331,7 @@
 			for (i=1;i<monies.length - 1;i++) {
 				num_shares = monies[i].amounts[share_id];
 				if (num_shares > 0) {
-					transfer(0, i, monies[issuer].amounts[price_id], num_shares, 0);
+					transfer(0, i, _18xx_payout_sum.value, num_shares, 0);
 					redraw_purse_amounts(i);
 					redraw_purse_amounts(0);
 				}
@@ -487,9 +487,9 @@
 
 				logdiv.scrollTop = _s('#log_display')[0].scrollHeight;
 				_ev(logdiv, "click", mark_log_line);
-				_ev(document, 'keydown', keyboard_handler);
 				_ev(_s('#undo')[0], "click", undo_click);
 			}
+				_ev(document, 'keydown', keyboard_handler);
 			_ev(_id("download"), "click", function () {
 				let file = makeTextFile();
 				_id("global_buttons").appendChild(_ce("a", {href:file}, "download"));
@@ -556,10 +556,11 @@
 		#previous span:before {padding:0 2px 2px 2px;margin-top:0;font-size:small;border-width:2px}
 		.spacer {display:inline-block;height:1px;width:99%;}
 		#previous .spacer:before {display:none;}
-		#log_display {width:100%;max-height:10em;overflow-y:scroll;margin:auto;color:white;font-weight:bold;border:3px solid #333;margin-top:20px;}
-		#log_display .log_line {padding:3px;margin:2px;}
+		#log_display {width:100%;max-height:15em;overflow-y:scroll;margin:auto;color:white;font-weight:bold;border:3px solid #333;margin-top:20px;}
+		#log_display .log_line {padding:3px;margin:2px;max-width:100%;}
 		#log_display .log_line:nth-child(6n), #log_display .log_line:nth-child(6n+1), #log_display .log_line:nth-child(6n+2) {background:#333;}
 		#log_display .log_line:last-child {font-size:larger;box-shadow:0 0 3px 1px yellow inset;}
+		#log_display .log_line .bank {border-radius:5px;border:solid 3px lightgreen;color:black;background:lightgreen;}
 		#global_buttons {padding:0 10px;}
 		#undo {background-color:gainsboro;width:48px;height:48px;border-radius:5px;padding:2px;border:3px outset gainsboro;}
 		.infin {font-size:46px;font-weight:bold;vertical-align:-3px;}
